@@ -1,5 +1,5 @@
 declare namespace JSX {
   interface IntrinsicElements {
-    'openai-chatkit': any;
+    'openai-chatkit': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement>;
   }
 }

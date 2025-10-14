@@ -202,7 +202,7 @@ export default function App() {
                 cursor: characterName.trim() ? 'pointer' : 'not-allowed'
               }}
             >
-              Commencer l'aventure ! 🚀
+              Commencons ! 🚀
             </button>
           </div>
         </div>
