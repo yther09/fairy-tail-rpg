@@ -47,7 +47,7 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
   };
 
   const deleteSave = async (slotId: number, event: React.MouseEvent) => {
-    event.stopPropagation(); // Empêche le clic parent
+    event.stopPropagation();
     
     const isConfirmed = window.confirm(
       `🗑️ Supprimer définitivement la sauvegarde du Slot ${slotId} ?\n\n⚠️ Cette action est irréversible !`
@@ -56,7 +56,6 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
     if (!isConfirmed) return;
 
     try {
-      // Au lieu de DELETE, on fait un UPDATE pour vider le slot
       const { error } = await supabase
         .from('rpg_saves')
         .update({
@@ -71,10 +70,8 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
 
       if (error) throw error;
       
-      // Recharger les sauvegardes après suppression
       await loadSaves();
       
-      // Notification de succès
       alert('✅ Sauvegarde supprimée avec succès !');
       
     } catch (error) {
@@ -120,7 +117,6 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
         margin: '0 auto'
       }}>
         
-        {/* Titre */}
         <div style={{
           textAlign: 'center',
           marginBottom: '40px'
@@ -142,7 +138,6 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
           </p>
         </div>
 
-        {/* Liste des sauvegardes */}
         <div style={{
           display: 'grid',
           gap: '20px'
@@ -180,7 +175,6 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
                   alignItems: 'center'
                 }}>
                   
-                  {/* Info gauche */}
                   <div>
                     <h3 style={{
                       margin: '0 0 10px 0',
@@ -212,7 +206,7 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
                           margin: '5px 0',
                           color: '#64748b'
                         }}>
-                          📊 Niveau {save.level} | 📍 {save.location || 'Début de l\'aventure'}
+                          📊 Niveau {save.level} | 📍 {save.location || &apos;Début de l&apos;aventure&apos;}
                         </p>
                         <p style={{
                           margin: '5px 0',
@@ -225,14 +219,12 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
                     )}
                   </div>
 
-                  {/* Boutons action */}
                   <div style={{
                     display: 'flex',
                     gap: '10px',
                     alignItems: 'center'
                   }}>
                     
-                    {/* Bouton principal */}
                     <div style={{
                       background: isEmpty ? '#e2e8f0' : '#FF6B35',
                       color: isEmpty ? '#64748b' : 'white',
@@ -244,7 +236,6 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
                       {isEmpty ? 'Nouvelle partie' : 'Continuer'}
                     </div>
 
-                    {/* Bouton supprimer (seulement si slot occupé) */}
                     {!isEmpty && (
                       <div
                         onClick={(e) => deleteSave(save.save_slot, e)}
