@@ -1,12 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 interface SaveSlot {
   id: number;
@@ -25,12 +20,28 @@ interface Props {
 export default function SaveSlotSelector({ onSelectSlot }: Props) {
   const [saves, setSaves] = useState<SaveSlot[]>([]);
   const [loading, setLoading] = useState(true);
+  const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
 
   useEffect(() => {
-    loadSaves();
+    // Initialiser Supabase uniquement côté client
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+    
+    if (supabaseUrl && supabaseKey) {
+      const client = createClient(supabaseUrl, supabaseKey);
+      setSupabase(client);
+    }
   }, []);
 
+  useEffect(() => {
+    if (supabase) {
+      loadSaves();
+    }
+  }, [supabase]);
+
   const loadSaves = async () => {
+    if (!supabase) return;
+    
     try {
       const { data, error } = await supabase
         .from('rpg_saves')
@@ -47,6 +58,8 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
   };
 
   const deleteSave = async (slotId: number, event: React.MouseEvent) => {
+    if (!supabase) return;
+    
     event.stopPropagation();
     
     const isConfirmed = window.confirm(
@@ -206,7 +219,7 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
                           margin: '5px 0',
                           color: '#64748b'
                         }}>
-                          📊 Niveau {save.level} | 📍 {save.location || "commençons"}
+                          📊 Niveau {save.level} | 📍 {save.location || "Début de l'aventure"}
                         </p>
                         <p style={{
                           margin: '5px 0',
