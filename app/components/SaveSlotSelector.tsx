@@ -206,7 +206,7 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
                           margin: '5px 0',
                           color: '#64748b'
                         }}>
-                          📊 Niveau {save.level} | 📍 {save.location || &apos;Début de l&apos;aventure&apos;}
+                          📊 Niveau {save.level} | 📍 {save.location || "commençons"}
                         </p>
                         <p style={{
                           margin: '5px 0',
