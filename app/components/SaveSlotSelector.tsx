@@ -46,6 +46,35 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
     }
   };
 
+  const deleteSave = async (slotId: number, event: React.MouseEvent) => {
+    event.stopPropagation(); // Empêche le clic parent
+    
+    const isConfirmed = window.confirm(
+      `🗑️ Supprimer définitivement la sauvegarde du Slot ${slotId} ?\n\n⚠️ Cette action est irréversible !`
+    );
+    
+    if (!isConfirmed) return;
+
+    try {
+      const { error } = await supabase
+        .from('rpg_saves')
+        .delete()
+        .eq('save_slot', slotId);
+
+      if (error) throw error;
+      
+      // Recharger les sauvegardes après suppression
+      await loadSaves();
+      
+      // Notification de succès
+      alert('✅ Sauvegarde supprimée avec succès !');
+      
+    } catch (error) {
+      console.error('Erreur suppression:', error);
+      alert('❌ Erreur lors de la suppression. Réessayez.');
+    }
+  };
+
   const formatDate = (date: string) => {
     return new Date(date).toLocaleDateString('fr-FR', {
       day: '2-digit',
@@ -188,16 +217,56 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
                     )}
                   </div>
 
-                  {/* Bouton action */}
+                  {/* Boutons action */}
                   <div style={{
-                    background: isEmpty ? '#e2e8f0' : '#FF6B35',
-                    color: isEmpty ? '#64748b' : 'white',
-                    padding: '15px 30px',
-                    borderRadius: '10px',
-                    fontWeight: 'bold',
-                    fontSize: '1.1em'
+                    display: 'flex',
+                    gap: '10px',
+                    alignItems: 'center'
                   }}>
-                    {isEmpty ? 'Nouvelle partie' : 'Continuer'}
+                    
+                    {/* Bouton principal */}
+                    <div style={{
+                      background: isEmpty ? '#e2e8f0' : '#FF6B35',
+                      color: isEmpty ? '#64748b' : 'white',
+                      padding: '15px 30px',
+                      borderRadius: '10px',
+                      fontWeight: 'bold',
+                      fontSize: '1.1em'
+                    }}>
+                      {isEmpty ? 'Nouvelle partie' : 'Continuer'}
+                    </div>
+
+                    {/* Bouton supprimer (seulement si slot occupé) */}
+                    {!isEmpty && (
+                      <div
+                        onClick={(e) => deleteSave(save.save_slot, e)}
+                        style={{
+                          background: '#dc2626',
+                          color: 'white',
+                          padding: '15px',
+                          borderRadius: '10px',
+                          fontWeight: 'bold',
+                          fontSize: '1.2em',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          minWidth: '50px'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = '#b91c1c';
+                          e.currentTarget.style.transform = 'scale(1.05)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = '#dc2626';
+                          e.currentTarget.style.transform = 'scale(1)';
+                        }}
+                        title={`Supprimer la sauvegarde ${save.character_name}`}
+                      >
+                        🗑️
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
