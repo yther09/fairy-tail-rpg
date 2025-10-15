@@ -1,292 +1,240 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-interface SaveSlot {
+type SaveSlot = {
   id: number;
   save_slot: number;
-  save_name: string;
+  save_name: string | null;
   character_name: string | null;
-  level: number;
+  level: number | null;
   location: string | null;
-  last_save: string;
-}
+  last_save: string | null;
+};
 
-interface Props {
+type SaveSlotSelectorProps = {
+  supabase: SupabaseClient;
   onSelectSlot: (slotId: number) => void;
-}
+};
 
-export default function SaveSlotSelector({ onSelectSlot }: Props) {
+export default function SaveSlotSelector({
+  supabase,
+  onSelectSlot,
+}: SaveSlotSelectorProps) {
   const [saves, setSaves] = useState<SaveSlot[]>([]);
   const [loading, setLoading] = useState(true);
-  const [supabase, setSupabase] = useState<SupabaseClient | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  useEffect(() => {
-    // Initialiser Supabase uniquement côté client
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    
-    if (supabaseUrl && supabaseKey) {
-      const client = createClient(supabaseUrl, supabaseKey);
-      setSupabase(client);
-    }
-  }, []);
+  const orderedSaves = useMemo(
+    () =>
+      [...saves].sort(
+        (left, right) =>
+          (left.save_slot ?? 0) - (right.save_slot ?? 0)
+      ),
+    [saves]
+  );
 
-  useEffect(() => {
-    if (supabase) {
-      loadSaves();
+  const loadSaves = useCallback(async () => {
+    setIsRefreshing(true);
+    setError(null);
+    try {
+      const { data, error: fetchError } = await supabase
+        .from("rpg_saves")
+        .select(
+          "id, save_slot, save_name, character_name, level, location, last_save"
+        )
+        .order("save_slot");
+
+      if (fetchError) {
+        throw fetchError;
+      }
+
+      setSaves(data ?? []);
+    } catch (fetchError) {
+      console.error("[save-slot] failed to load saves", fetchError);
+      setError("Impossible de récupérer les sauvegardes pour le moment.");
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
     }
   }, [supabase]);
 
-  const loadSaves = async () => {
-    if (!supabase) return;
-    
-    try {
-      const { data, error } = await supabase
-        .from('rpg_saves')
-        .select('*')
-        .order('save_slot');
+  useEffect(() => {
+    void loadSaves();
+  }, [loadSaves]);
 
-      if (error) throw error;
-      setSaves(data || []);
-    } catch (error) {
-      console.error('Erreur chargement sauvegardes:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const handleDelete = useCallback(
+    async (slotNumber: number) => {
+      const confirmed = window.confirm(
+        `Supprimer définitivement la sauvegarde du slot ${slotNumber} ?`
+      );
+      if (!confirmed) {
+        return;
+      }
 
-  const deleteSave = async (slotId: number, event: React.MouseEvent) => {
-    if (!supabase) return;
-    
-    event.stopPropagation();
-    
-    const isConfirmed = window.confirm(
-      `🗑️ Supprimer définitivement la sauvegarde du Slot ${slotId} ?\n\n⚠️ Cette action est irréversible !`
-    );
-    
-    if (!isConfirmed) return;
+      setError(null);
 
-    try {
-      const { error } = await supabase
-        .from('rpg_saves')
-        .update({
+      try {
+        const resetPayload = {
           character_name: null,
           level: 1,
           location: null,
           conversation_history: null,
           game_state: null,
-          last_save: new Date().toISOString()
-        })
-        .eq('save_slot', slotId);
+          last_save: new Date().toISOString(),
+        };
 
-      if (error) throw error;
-      
-      await loadSaves();
-      
-      alert('✅ Sauvegarde supprimée avec succès !');
-      
-    } catch (error) {
-      console.error('Erreur suppression:', error);
-      alert('❌ Erreur lors de la suppression. Réessayez.');
+        const { error: updateError } = await supabase
+          .from("rpg_saves")
+          .update(resetPayload)
+          .eq("save_slot", slotNumber);
+
+        if (updateError) {
+          throw updateError;
+        }
+
+        await loadSaves();
+      } catch (updateError) {
+        console.error("[save-slot] failed to delete slot", updateError);
+        setError("La suppression a échoué. Réessayez plus tard.");
+      }
+    },
+    [loadSaves, supabase]
+  );
+
+  const renderContent = () => {
+    if (loading) {
+      return (
+        <div className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-700 p-6">
+          <div className="rounded-xl bg-white/20 px-6 py-4 text-lg font-semibold text-white backdrop-blur">
+            Chargement des sauvegardes...
+          </div>
+        </div>
+      );
     }
-  };
 
-  const formatDate = (date: string) => {
-    return new Date(date).toLocaleDateString('fr-FR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
-  if (loading) {
     return (
-      <div style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        minHeight: '100vh',
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'
-      }}>
-        <div style={{ color: 'white', fontSize: '1.5em' }}>
-          ⏳ Chargement des sauvegardes...
+      <div className="min-h-screen bg-gradient-to-br from-indigo-500 to-purple-700 px-5 py-10">
+        <div className="mx-auto flex max-w-5xl flex-col gap-6">
+          <header className="flex items-center justify-between text-white">
+            <div>
+              <h1 className="text-3xl font-bold">Choisis ta sauvegarde</h1>
+              <p className="mt-1 text-sm text-indigo-100">
+                Chaque slot correspond à une aventure différente. Sélectionne
+                un slot vide pour commencer une nouvelle partie.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void loadSaves()}
+              className="rounded-lg bg-white/20 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/30"
+              disabled={isRefreshing}
+            >
+              {isRefreshing ? "Actualisation..." : "Actualiser"}
+            </button>
+          </header>
+
+          {error && (
+            <div className="rounded-lg border border-red-300 bg-white/90 px-4 py-3 text-sm font-medium text-red-600 shadow">
+              {error}
+            </div>
+          )}
+
+          <ul className="grid gap-4 md:grid-cols-2">
+            {orderedSaves.map((save) => {
+              const isEmpty = !save.character_name;
+
+              return (
+                <li key={save.id}>
+                  <button
+                    type="button"
+                    onClick={() => onSelectSlot(save.save_slot)}
+                    className="group flex w-full flex-col rounded-2xl bg-white p-6 text-left shadow-lg transition hover:-translate-y-1 hover:shadow-2xl"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="text-xs uppercase tracking-wide text-slate-400">
+                          Slot {save.save_slot}
+                        </p>
+                        <h2 className="mt-1 text-xl font-semibold text-slate-900">
+                          {isEmpty ? "Nouvelle partie" : save.save_name ?? "Aventure en cours"}
+                        </h2>
+                      </div>
+                      {!isEmpty && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void handleDelete(save.save_slot);
+                          }}
+                          className="rounded-md bg-red-500 px-3 py-1 text-sm font-semibold text-white transition hover:bg-red-600"
+                        >
+                          Supprimer
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="mt-4 space-y-2 text-sm text-slate-600">
+                      {isEmpty ? (
+                        <p>Commence une nouvelle histoire dans ce slot.</p>
+                      ) : (
+                        <>
+                          <p>
+                            Personnage :{" "}
+                            <span className="font-semibold text-slate-800">
+                              {save.character_name}
+                            </span>
+                          </p>
+                          <p>
+                            Niveau :{" "}
+                            <span className="font-semibold text-slate-800">
+                              {save.level ?? 1}
+                            </span>
+                          </p>
+                          <p>
+                            Lieu :{" "}
+                            <span className="font-semibold text-slate-800">
+                              {save.location ?? "Début de l'aventure"}
+                            </span>
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            Dernière sauvegarde :{" "}
+                            {save.last_save
+                              ? formatDate(save.last_save)
+                              : "inconnue"}
+                          </p>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="mt-6 rounded-lg bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 transition group-hover:bg-orange-500 group-hover:text-white">
+                      {isEmpty ? "Commencer une nouvelle aventure" : "Continuer"}
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       </div>
     );
+  };
+
+  return renderContent();
+}
+
+function formatDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "inconnue";
   }
-
-  return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-      padding: '40px 20px'
-    }}>
-      <div style={{
-        maxWidth: '800px',
-        margin: '0 auto'
-      }}>
-        
-        <div style={{
-          textAlign: 'center',
-          marginBottom: '40px'
-        }}>
-          <h1 style={{
-            color: 'white',
-            fontSize: '3em',
-            margin: '0 0 10px 0',
-            textShadow: '3px 3px 6px rgba(0,0,0,0.3)'
-          }}>
-            🐉 RPG FAIRY TAIL 🐉
-          </h1>
-          <p style={{
-            color: 'white',
-            fontSize: '1.3em',
-            opacity: 0.9
-          }}>
-            Sélectionne une partie
-          </p>
-        </div>
-
-        <div style={{
-          display: 'grid',
-          gap: '20px'
-        }}>
-          {saves.map((save) => {
-            const isEmpty = !save.character_name;
-            
-            return (
-              <div
-                key={save.id}
-                onClick={() => onSelectSlot(save.save_slot)}
-                style={{
-                  background: 'white',
-                  borderRadius: '15px',
-                  padding: '25px',
-                  boxShadow: '0 8px 25px rgba(0,0,0,0.2)',
-                  cursor: 'pointer',
-                  transition: 'all 0.3s ease',
-                  border: '3px solid transparent'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.transform = 'translateY(-5px)';
-                  e.currentTarget.style.borderColor = '#FF6B35';
-                  e.currentTarget.style.boxShadow = '0 12px 35px rgba(255,107,53,0.4)';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.transform = 'translateY(0)';
-                  e.currentTarget.style.borderColor = 'transparent';
-                  e.currentTarget.style.boxShadow = '0 8px 25px rgba(0,0,0,0.2)';
-                }}
-              >
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
-                }}>
-                  
-                  <div>
-                    <h3 style={{
-                      margin: '0 0 10px 0',
-                      fontSize: '1.5em',
-                      color: isEmpty ? '#94a3b8' : '#1e293b'
-                    }}>
-                      {isEmpty ? '📂' : '🎮'} Slot {save.save_slot}
-                    </h3>
-                    
-                    {isEmpty ? (
-                      <p style={{
-                        margin: 0,
-                        color: '#94a3b8',
-                        fontSize: '1.1em'
-                      }}>
-                        Aucune sauvegarde - Cliquer pour commencer
-                      </p>
-                    ) : (
-                      <>
-                        <p style={{
-                          margin: '5px 0',
-                          fontSize: '1.2em',
-                          color: '#FF6B35',
-                          fontWeight: 'bold'
-                        }}>
-                          {save.character_name}
-                        </p>
-                        <p style={{
-                          margin: '5px 0',
-                          color: '#64748b'
-                        }}>
-                          📊 Niveau {save.level} | 📍 {save.location || "Début de l'aventure"}
-                        </p>
-                        <p style={{
-                          margin: '5px 0',
-                          fontSize: '0.9em',
-                          color: '#94a3b8'
-                        }}>
-                          💾 Dernière sauvegarde : {formatDate(save.last_save)}
-                        </p>
-                      </>
-                    )}
-                  </div>
-
-                  <div style={{
-                    display: 'flex',
-                    gap: '10px',
-                    alignItems: 'center'
-                  }}>
-                    
-                    <div style={{
-                      background: isEmpty ? '#e2e8f0' : '#FF6B35',
-                      color: isEmpty ? '#64748b' : 'white',
-                      padding: '15px 30px',
-                      borderRadius: '10px',
-                      fontWeight: 'bold',
-                      fontSize: '1.1em'
-                    }}>
-                      {isEmpty ? 'Nouvelle partie' : 'Continuer'}
-                    </div>
-
-                    {!isEmpty && (
-                      <div
-                        onClick={(e) => deleteSave(save.save_slot, e)}
-                        style={{
-                          background: '#dc2626',
-                          color: 'white',
-                          padding: '15px',
-                          borderRadius: '10px',
-                          fontWeight: 'bold',
-                          fontSize: '1.2em',
-                          cursor: 'pointer',
-                          transition: 'all 0.2s ease',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          minWidth: '50px'
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#b91c1c';
-                          e.currentTarget.style.transform = 'scale(1.05)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = '#dc2626';
-                          e.currentTarget.style.transform = 'scale(1)';
-                        }}
-                        title={`Supprimer la sauvegarde ${save.character_name}`}
-                      >
-                        🗑️
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-      </div>
-    </div>
-  );
+  return date.toLocaleString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }

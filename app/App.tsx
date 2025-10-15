@@ -1,94 +1,136 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
+import type { PostgrestError, SupabaseClient } from "@supabase/supabase-js";
 import { ChatKitPanel, type FactAction } from "@/components/ChatKitPanel";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { createClient } from '@supabase/supabase-js';
-import SaveSlotSelector from './components/SaveSlotSelector';
+import SaveSlotSelector from "./components/SaveSlotSelector";
+import { getSupabaseClient } from "@/lib/supabaseClient";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-);
+const AUTOSAVE_INTERVAL_MS = 30_000;
+
+async function persistAutosave(
+  client: SupabaseClient,
+  slotId: number
+): Promise<void> {
+  const now = new Date().toISOString();
+  await client
+    .from("rpg_saves")
+    .update({
+      game_state: {
+        last_activity: now,
+        playing: true,
+      },
+      last_save: now,
+    })
+    .eq("save_slot", slotId);
+}
 
 export default function App() {
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
-  const [characterName, setCharacterName] = useState<string>('');
+  const [characterName, setCharacterName] = useState<string>("");
   const [showNameInput, setShowNameInput] = useState(false);
   const { scheme, setScheme } = useColorScheme();
+  const supabase = useMemo(() => getSupabaseClient(), []);
+  const supabaseUnavailable = !supabase;
 
-  // Sauvegarde automatique
   useEffect(() => {
-    if (!selectedSlot) return;
+    if (!selectedSlot || !supabase) {
+      return;
+    }
 
-    const saveGame = async () => {
+    let cancelled = false;
+
+    const runAutosave = async () => {
       try {
-        const now = new Date();
-        await supabase
-          .from('rpg_saves')
-          .update({ 
-            game_state: { 
-              last_activity: now.toISOString(),
-              playing: true 
-            },
-            last_save: now.toISOString()
-          })
-          .eq('save_slot', selectedSlot);
-        
-        console.log(`✅ Partie ${selectedSlot} sauvegardée à`, now.toLocaleTimeString('fr-FR'));
+        await persistAutosave(supabase, selectedSlot);
+        if (process.env.NODE_ENV !== "production") {
+          console.debug(
+            "[autosave]",
+            `slot ${selectedSlot} saved at ${new Date().toLocaleTimeString("fr-FR")}`
+          );
+        }
       } catch (error) {
-        console.error('❌ Erreur sauvegarde:', error);
+        console.error("[autosave] failed to persist progress", error);
       }
     };
 
-    saveGame();
-    const interval = setInterval(saveGame, 30000);
-    return () => clearInterval(interval);
-  }, [selectedSlot]);
+    void runAutosave();
+    const interval = setInterval(() => {
+      if (!cancelled) {
+        void runAutosave();
+      }
+    }, AUTOSAVE_INTERVAL_MS);
 
-  const handleSelectSlot = async (slotNumber: number) => {
-    // Vérifier si le slot est vide
-    const { data } = await supabase
-      .from('rpg_saves')
-      .select('character_name')
-      .eq('save_slot', slotNumber)
-      .single();
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [selectedSlot, supabase]);
 
-    if (!data?.character_name) {
-      // Nouvelle partie : demander le nom
-      setSelectedSlot(slotNumber);
-      setShowNameInput(true);
-    } else {
-      // Continuer une partie existante
-      setSelectedSlot(slotNumber);
+  const handleSelectSlot = useCallback(
+    async (slotNumber: number) => {
+      if (!supabase) {
+        return;
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from("rpg_saves")
+          .select("character_name")
+          .eq("save_slot", slotNumber)
+          .single();
+
+        if (error) {
+          handleSupabaseError("Failed to load save slot", error);
+          return;
+        }
+
+        if (!data?.character_name) {
+          setSelectedSlot(slotNumber);
+          setShowNameInput(true);
+        } else {
+          setSelectedSlot(slotNumber);
+        }
+      } catch (error) {
+        console.error("[save-slot] unexpected error", error);
+      }
+    },
+    [supabase]
+  );
+
+  const handleStartNewGame = useCallback(async () => {
+    if (!characterName.trim() || !selectedSlot || !supabase) {
+      return;
     }
-  };
-
-  const handleStartNewGame = async () => {
-    if (!characterName.trim() || !selectedSlot) return;
 
     try {
-      await supabase
-        .from('rpg_saves')
+      const { error } = await supabase
+        .from("rpg_saves")
         .update({
-          character_name: characterName,
-          save_name: `Aventure de ${characterName}`,
-          location: 'Magnolia - Devant la guilde',
-          level: 1
+          character_name: characterName.trim(),
+          save_name: `Aventure de ${characterName.trim()}`,
+          location: "Magnolia - Devant la guilde",
+          level: 1,
         })
-        .eq('save_slot', selectedSlot);
+        .eq("save_slot", selectedSlot);
+
+      if (error) {
+        handleSupabaseError("Failed to create character", error);
+        return;
+      }
 
       setShowNameInput(false);
     } catch (error) {
-      console.error('Erreur création personnage:', error);
+      console.error("[new-game] unexpected error", error);
     }
-  };
+  }, [characterName, selectedSlot, supabase]);
 
-  const handleBackToMenu = () => {
+  const handleBackToMenu = useCallback(() => {
     setSelectedSlot(null);
     setShowNameInput(false);
-    setCharacterName('');
-  };
+    setCharacterName("");
+  }, []);
 
   const handleWidgetAction = useCallback(async (action: FactAction) => {
     if (process.env.NODE_ENV !== "production") {
@@ -102,107 +144,80 @@ export default function App() {
     }
   }, []);
 
-  // Écran de sélection de slot
-  if (!selectedSlot) {
-    return <SaveSlotSelector onSelectSlot={handleSelectSlot} />;
+  if (supabaseUnavailable) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center bg-slate-100 p-6 text-center dark:bg-slate-950">
+        <div className="max-w-xl rounded-2xl border border-slate-200 bg-white p-8 shadow-lg dark:border-slate-800 dark:bg-slate-900">
+          <h1 className="mb-4 text-2xl font-semibold text-slate-900 dark:text-slate-100">
+            Supabase configuration required
+          </h1>
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            Set the environment variables{" "}
+            <code className="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">
+              NEXT_PUBLIC_SUPABASE_URL
+            </code>{" "}
+            and{" "}
+            <code className="rounded bg-slate-100 px-1 py-0.5 text-xs dark:bg-slate-800">
+              NEXT_PUBLIC_SUPABASE_ANON_KEY
+            </code>{" "}
+            to enable save slots and game progress.
+          </p>
+        </div>
+      </main>
+    );
   }
 
-  // Écran de création de personnage
+  if (!supabase) {
+    return null;
+  }
+
+  if (!selectedSlot) {
+    return (
+      <SaveSlotSelector
+        supabase={supabase}
+        onSelectSlot={handleSelectSlot}
+      />
+    );
+  }
+
   if (showNameInput) {
     return (
-      <div style={{
-        minHeight: '100vh',
-        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '20px'
-      }}>
-        <div style={{
-          background: 'white',
-          borderRadius: '20px',
-          padding: '40px',
-          maxWidth: '500px',
-          width: '100%',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.3)'
-        }}>
-          <h2 style={{
-            textAlign: 'center',
-            color: '#FF6B35',
-            fontSize: '2em',
-            marginBottom: '10px'
-          }}>
-            🐉 Nouvelle Aventure
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-700 p-5">
+        <div className="w-full max-w-xl rounded-2xl bg-white p-10 shadow-2xl">
+          <h2 className="text-center text-3xl font-semibold text-orange-500">
+            Nouvelle aventure
           </h2>
-          <p style={{
-            textAlign: 'center',
-            color: '#64748b',
-            marginBottom: '30px'
-          }}>
+          <p className="mt-3 text-center text-slate-500">
             Quel est le nom de ton mage ?
           </p>
-          
           <input
             type="text"
             value={characterName}
-            onChange={(e) => setCharacterName(e.target.value)}
+            onChange={(event) => setCharacterName(event.target.value)}
             placeholder="Ex: Natsu, Lucy, Gray..."
             maxLength={20}
-            style={{
-              width: '100%',
-              padding: '15px',
-              fontSize: '1.2em',
-              border: '2px solid #e2e8f0',
-              borderRadius: '10px',
-              marginBottom: '20px',
-              outline: 'none'
-            }}
-            onFocus={(e) => e.target.style.borderColor = '#FF6B35'}
-            onBlur={(e) => e.target.style.borderColor = '#e2e8f0'}
-            onKeyPress={(e) => {
-              if (e.key === 'Enter' && characterName.trim()) {
-                handleStartNewGame();
+            className="mt-8 w-full rounded-lg border-2 border-slate-200 p-4 text-lg outline-none focus:border-orange-500"
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && characterName.trim()) {
+                void handleStartNewGame();
               }
             }}
           />
-
-          <div style={{
-            display: 'flex',
-            gap: '10px'
-          }}>
+          <div className="mt-6 flex gap-3">
             <button
+              type="button"
               onClick={handleBackToMenu}
-              style={{
-                flex: 1,
-                padding: '15px',
-                background: '#e2e8f0',
-                color: '#64748b',
-                border: 'none',
-                borderRadius: '10px',
-                fontSize: '1.1em',
-                fontWeight: 'bold',
-                cursor: 'pointer'
-              }}
+              className="flex-1 rounded-lg bg-slate-200 px-4 py-3 text-lg font-semibold text-slate-600 transition hover:bg-slate-300"
             >
               Retour
             </button>
-            
             <button
-              onClick={handleStartNewGame}
+              type="button"
+              onClick={() => void handleStartNewGame()}
               disabled={!characterName.trim()}
-              style={{
-                flex: 2,
-                padding: '15px',
-                background: characterName.trim() ? '#FF6B35' : '#cbd5e1',
-                color: 'white',
-                border: 'none',
-                borderRadius: '10px',
-                fontSize: '1.1em',
-                fontWeight: 'bold',
-                cursor: characterName.trim() ? 'pointer' : 'not-allowed'
-              }}
+              className="flex-[1.5] rounded-lg bg-orange-500 px-4 py-3 text-lg font-semibold text-white transition hover:bg-orange-600 disabled:cursor-not-allowed disabled:bg-slate-400"
             >
-              Commencons ! 🚀
+              Commencer l&apos;aventure
             </button>
           </div>
         </div>
@@ -210,34 +225,17 @@ export default function App() {
     );
   }
 
-  // Jeu principal
   return (
     <main className="flex min-h-screen flex-col items-center justify-end bg-slate-100 dark:bg-slate-950">
-      
-      {/* Bouton retour menu */}
-      <div style={{
-        position: 'fixed',
-        top: '20px',
-        left: '20px',
-        zIndex: 1000
-      }}>
+      <div className="fixed left-5 top-5 z-50">
         <button
+          type="button"
           onClick={handleBackToMenu}
-          style={{
-            padding: '10px 20px',
-            background: '#FF6B35',
-            color: 'white',
-            border: 'none',
-            borderRadius: '10px',
-            fontWeight: 'bold',
-            cursor: 'pointer',
-            boxShadow: '0 4px 10px rgba(255,107,53,0.3)'
-          }}
+          className="rounded-lg bg-orange-500 px-5 py-2 font-semibold text-white shadow-md transition hover:bg-orange-600"
         >
-          ← Menu
+          Retour au menu
         </button>
       </div>
-
       <div className="mx-auto w-full max-w-5xl">
         <ChatKitPanel
           theme={scheme}
@@ -248,4 +246,10 @@ export default function App() {
       </div>
     </main>
   );
+}
+
+function handleSupabaseError(message: string, error: PostgrestError): void {
+  if (process.env.NODE_ENV !== "production") {
+    console.error(`[supabase] ${message}`, error);
+  }
 }
