@@ -56,9 +56,17 @@ export default function SaveSlotSelector({ onSelectSlot }: Props) {
     if (!isConfirmed) return;
 
     try {
+      // Au lieu de DELETE, on fait un UPDATE pour vider le slot
       const { error } = await supabase
         .from('rpg_saves')
-        .delete()
+        .update({
+          character_name: null,
+          level: 1,
+          location: null,
+          conversation_history: null,
+          game_state: null,
+          last_save: new Date().toISOString()
+        })
         .eq('save_slot', slotId);
 
       if (error) throw error;
